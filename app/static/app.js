@@ -57,7 +57,7 @@
     });
   }
 
-  // 2) 提交表单 → POST /api/submit → 成功跳回执；409/422 就地提示
+  // 2) 提交表单 → POST /api/submit → 成功跳回执；结果不明/失败跳尝试页；409/422 就地提示
   qsa('form[data-json-submit]').forEach(function (form) {
     form.addEventListener('submit', async function (event) {
       event.preventDefault();
@@ -68,11 +68,53 @@
         var v = versionOf(form);
         if (v) payload.version = v;
         var data = await postJSON('/api/submit', payload);
-        var suffix = data.replayed ? '&replayed=1' : '';
-        window.location.href = '/review?receipt=' + encodeURIComponent(data.receipt.receipt_no) + suffix;
+        if (data.receipt && data.receipt.receipt_no) {
+          var suffix = data.replayed ? '&replayed=1' : '';
+          window.location.href = '/review?receipt=' + encodeURIComponent(data.receipt.receipt_no) + suffix;
+        } else if (data.attempt && data.attempt.attempt_no) {
+          // 202 结果不明 / 502 明确失败：去尝试页核对、重试或认领，而不是再点一次提交
+          window.location.href = '/attempts?attempt=' + encodeURIComponent(data.attempt.attempt_no);
+        }
       } catch (err) {
         showError(err);
+        if (err.status === 423 && err.payload && err.payload.attempt) {
+          // 单据被在途/待核对尝试锁住：直接引导到尝试处理页
+          window.location.href = '/attempts?attempt=' + encodeURIComponent(err.payload.attempt.attempt_no);
+          return;
+        }
         if (btn) btn.disabled = false;
+      }
+    });
+  });
+
+  // 2b) 尝试页：认领回执走 fetch，失败就地提示，成功跳复核页
+  qsa('form[data-claim-form]').forEach(function (form) {
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var attemptNo = form.getAttribute('data-attempt');
+      var input = qs('input[name="receipt_no"]', form);
+      var body = {};
+      if (input && input.value.trim()) body.receipt_no = input.value.trim();
+      try {
+        var data = await postJSON('/api/attempts/' + encodeURIComponent(attemptNo) + '/claim', body);
+        if (data.receipt && data.receipt.receipt_no) {
+          window.location.href = '/review?receipt=' + encodeURIComponent(data.receipt.receipt_no);
+        }
+      } catch (err) {
+        showError(err);
+      }
+    });
+  });
+
+  // 2c) 故障注入按钮（演示）：设置下一次提交的故障模式
+  qsa('#fault-buttons [data-fault]').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      try {
+        var data = await postJSON('/api/dev/fault', { mode: btn.getAttribute('data-fault') });
+        var host = qs('#fault-result');
+        if (host) host.textContent = '已设置下一次提交故障：' + data.next_fault;
+      } catch (err) {
+        showError(err);
       }
     });
   });

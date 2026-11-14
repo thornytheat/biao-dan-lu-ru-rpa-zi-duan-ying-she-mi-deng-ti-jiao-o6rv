@@ -9,6 +9,8 @@ services:
     environment:
       APP_PORT: "18211"
       FORMFORGE_DATA_DIR: /app/data
+      FORMFORGE_ENABLE_FAULTS: "${FORMFORGE_ENABLE_FAULTS:-1}"
+      FORMFORGE_ATTEMPT_TIMEOUT: "${FORMFORGE_ATTEMPT_TIMEOUT:-300}"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 5s

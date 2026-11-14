@@ -13,7 +13,9 @@
 <div class="page-head">
   <div>
     <h1 class="page-title">总览</h1>
-    <p class="page-sub">采购申请单 → 报销表单：先 dry-run 看冲突与校验，再提交拿回执；同一 payload 重复提交只返回既有回执，不重复入账。</p>
+    <p class="page-sub">采购申请单 → 报销表单：先 dry-run 看冲突与校验，再以<strong>可恢复尝试</strong>提交。
+      每次提交开始即固定规则快照与表单内容；超时/中断只让尝试停在「待核对」并锁住该单据，
+      可重试或认领回执恢复，重试多少次都不新增第二张业务回执，审计全程留痕。</p>
   </div>
 </div>
 
@@ -37,6 +39,11 @@
     <div class="k-label">提交记录</div>
     <div class="k-value">{{ submission_count }}</div>
     <div class="k-note">已落库回执（submissions）</div>
+  </div>
+  <div class="kpi {% if open_attempt_count %}err{% else %}ok{% endif %}">
+    <div class="k-label">在途 / 待核对尝试</div>
+    <div class="k-value">{{ open_attempt_count }}</div>
+    <div class="k-note">{% if open_attempt_count %}锁单待核对{% else %}无锁定单据{% endif %}</div>
   </div>
   <div class="kpi warn">
     <div class="k-label">冲突热点</div>
@@ -117,6 +124,8 @@
           会看到 <strong>2 条同优先级冲突</strong>（amount 的 R01/R02、expense_type 的 R03/R04）与 <strong>2 条校验错误</strong>（冲突未决无法定值）。</li>
         <li>按页面给出的建议把 <code>R01</code> 优先级从 10 改成 20、<code>R03</code> 从 15 改成 25，保存并重跑 —— 冲突消除、校验通过。</li>
         <li>提交，得到回执 <code>RCPT-CG-2026-0001-V1</code>；再点一次提交 → 返回既有回执且 <code>replayed=true</code>，记录数不增加。</li>
+        <li>到 <a href="/attempts">提交尝试</a> 页用故障注入制造一次「超时」：单据转为待核对并锁定，
+          再点提交得到 423 而不是第二张回执；点「重试」或「认领回执」即可恢复，全过程在审计流水可查。</li>
         <li>把同一单据金额改成 1500 且不升版再提交 → <code>409 stale_version</code>；显式把 version 改成 2 → 新版本落库，
           在 <a href="/review">提交复核与回执</a> 看到 V1/V2 版本链。</li>
       </ol>
@@ -185,6 +194,40 @@
           {% endfor %}
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>可恢复尝试状态</h2>
+        <div class="panel-actions">
+          <span class="tag {% if open_attempt_count %}err{% else %}ok{% endif %}">{{ open_attempt_count }} 个待处理</span>
+          <a class="btn secondary small" href="/attempts">尝试监控</a>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th>状态</th><th class="num">尝试数</th><th>含义</th></tr></thead>
+          <tbody>
+          {% for card in attempt_cards %}
+            <tr>
+              <td><span class="tag {{ card.tag }}">{{ card.label }}</span></td>
+              <td class="num">{{ card.count }}</td>
+              <td class="small muted">
+                {% if card.status == 'in_flight' %}请求已发出，等待结果
+                {% elif card.status == 'unknown' %}结果不明，单据锁定待核对
+                {% elif card.status == 'failed' %}远端明确拒绝，可直接重试
+                {% else %}单事务确认的正式回执{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-actions">
+        <span class="small muted" style="align-self:center">
+          状态口径与工作台、复核页、/api/attempts、/health 完全一致。
+        </span>
       </div>
     </section>
 

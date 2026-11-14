@@ -688,3 +688,11 @@ td input[type="number"] { width: 100%; max-width: 92px; padding: 5px 8px; }
 .btn.small, button.small { padding: 5px 10px; font-size: 12.5px; }
 
 .grid + .card, .card + .grid { margin-top: 4px; }
+
+/* ---------- 可恢复尝试：按钮组与高亮行 ---------- */
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn-row form { margin: 0; }
+tr.row-active { background: var(--warn-weak, #fdf3e2); outline: 2px solid var(--warn, #c77c1f); outline-offset: -2px; }
+#attempts-table td { vertical-align: middle; }
+#attempts-table form { margin: 0 0 6px 0; }
+

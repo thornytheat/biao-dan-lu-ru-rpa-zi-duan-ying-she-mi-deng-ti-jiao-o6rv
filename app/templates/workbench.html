@@ -287,11 +287,27 @@
 
     <section class="panel" id="m6">
       <div class="panel-head">
-        <h2>提交并取回执</h2>
-        <div class="panel-actions">{% if run.submittable %}<span class="tag ok">可提交</span>{% else %}<span class="tag err">不可提交</span>{% endif %}</div>
+        <h2>提交并取回执（可恢复尝试）</h2>
+        <div class="panel-actions">
+          {% if lock_attempt %}<span class="tag err">单据已锁定 · {{ lock_attempt.status_label }}</span>
+          {% elif run.submittable %}<span class="tag ok">可提交</span>{% else %}<span class="tag err">不可提交</span>{% endif %}
+        </div>
       </div>
       <div class="panel-body">
-        {% if run.submittable %}
+        {% if lock_attempt %}
+        <div class="alert alert-error" role="alert">
+          <strong>单据 {{ lock_attempt.doc_no }} 已被尝试 {{ lock_attempt.attempt_no }} 锁定（{{ lock_attempt.status_label }}）。</strong>
+          上次提交结果不明或仍在途，再次点击不会新建提交，也不会产生第二张回执；请先核对处理。
+          其他单据可照常提交，不受影响。
+          <div class="small" style="margin-top:6px">最近错误：{{ lock_attempt.last_error or '—' }}</div>
+        </div>
+        <div class="btn-row">
+          <form method="post" action="/attempts/{{ lock_attempt.attempt_no }}/retry" style="display:inline">
+            <button type="submit">重试（按固定快照自动核对远端回执）</button>
+          </form>
+          <a class="btn secondary" href="/attempts?attempt={{ lock_attempt.attempt_no }}">前往核对 / 认领回执</a>
+        </div>
+        {% elif run.submittable %}
         <form method="post" action="/workbench/submit" data-json-submit data-doc-no="{{ run.doc_no }}">
           <input type="hidden" name="doc_no" value="{{ run.doc_no }}">
           <div class="field" style="max-width:240px">
@@ -300,6 +316,10 @@
           </div>
           <button type="submit">提交并取回执</button>
           <p id="form-error" class="alert alert-error" hidden></p>
+          <p class="small muted" style="margin:8px 0 0">
+            提交即创建可恢复尝试：开始时固定规则快照与表单内容；超时/中断会转为「待核对」并锁定本单据，
+            可在 <a href="/attempts">提交尝试</a> 页重试或认领回执，重试不新增第二张业务回执。
+          </p>
         </form>
         {% else %}
         <p class="small" style="margin:0">
@@ -308,6 +328,32 @@
         </p>
         {% endif %}
         <p class="small muted" id="run-error" hidden></p>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if doc_attempts %}
+    <section class="panel" id="m7">
+      <div class="panel-head">
+        <h2>本单据的提交尝试</h2>
+        <div class="panel-actions"><a class="btn secondary small" href="/attempts">全部尝试</a></div>
+      </div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th>尝试号</th><th>状态</th><th>回执号</th><th>送达次数</th><th>更新时间</th><th></th></tr></thead>
+          <tbody>
+          {% for a in doc_attempts %}
+            <tr>
+              <td><code>{{ a.attempt_no }}</code></td>
+              <td><span class="tag {{ a.status_tag }}">{{ a.status_label }}</span></td>
+              <td class="small nowrap"><code>{{ a.receipt_no }}</code></td>
+              <td>{{ a.retries }}</td>
+              <td class="small muted nowrap">{{ a.updated_at }}</td>
+              <td><a class="small" href="/attempts?attempt={{ a.attempt_no }}">详情</a></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
       </div>
     </section>
     {% endif %}

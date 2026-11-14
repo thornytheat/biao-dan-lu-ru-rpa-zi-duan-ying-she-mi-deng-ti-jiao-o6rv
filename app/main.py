@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import contract as contract_mod
-from . import service, settings, store
+from . import gateway, service, settings, store
 
 app = FastAPI(title=settings.APP_NAME)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -20,14 +20,19 @@ templates.env.filters["pretty_json"] = lambda value: json.dumps(
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 SEED_INFO = store.init_db()
+# 崩溃恢复：上次进程中断留下的在途尝试转待核对并锁单。
+RECOVERED = service.recover_on_startup()
 
 
 def _base(request: Request, **extra) -> dict:
+    attempt_counts = store.count_attempts_by_status()
     context = {
         "request": request,
         "app_name": settings.APP_NAME,
         "seed_info": SEED_INFO,
         "submission_count": store.count_submissions(),
+        "open_attempt_count": attempt_counts.get("in_flight", 0) + attempt_counts.get("unknown", 0),
+        "status_labels": service.STATUS_LABELS,
     }
     context.update(extra)
     return context
@@ -44,6 +49,10 @@ def _workbench_context(doc_no: str | None, version: int | None, run_flag: bool) 
             store.save_preview(run)
     contract = contract_mod.load_contract()
     overrides = store.list_overrides()
+    # 同一状态源：工作台展示的锁定尝试与 /attempts、/review 完全一致
+    lock = store.open_attempt_for_doc(selected) if selected else None
+    doc_attempts = service.attempts_data()["attempts"] if selected else []
+    doc_attempts = [a for a in doc_attempts if a["doc_no"] == selected][:6]
     return {
         "docs": docs,
         "selected": selected,
@@ -56,11 +65,17 @@ def _workbench_context(doc_no: str | None, version: int | None, run_flag: bool) 
         "overrides": overrides,
         "override_count": len(overrides),
         "suggestions": [c["fix"] for c in (run["conflicts"] if run else [])],
+        "lock_attempt": service._attempt_view(lock) if lock else None,
+        "doc_attempts": doc_attempts,
     }
 
 
 @app.get("/health")
 def health():
+    attempt_counts = store.count_attempts_by_status()
+    open_docs = sorted(
+        {a["doc_no"] for a in store.list_attempts(500) if a["status"] in store.OPEN_STATUSES}
+    )
     return JSONResponse(
         {
             "status": "ok",
@@ -68,6 +83,9 @@ def health():
             "docs": store.count_docs(),
             "submissions": store.count_submissions(),
             "seed_version": SEED_INFO["seed_version"],
+            "attempts": attempt_counts,
+            "locked_docs": open_docs,
+            "remote_receipts": store.count_remote_receipts(),
         }
     )
 
@@ -80,6 +98,7 @@ def index(request: Request):
     recent_submissions = sorted(
         store.list_submissions(), key=lambda item: item.get("created_at") or "", reverse=True
     )[:6]
+    attempt_cards = service.attempts_data()
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -96,6 +115,7 @@ def index(request: Request):
                 {"target": "amount", "rules": ["R01", "R02"], "priority": 10, "values": ["1280.50", "1446.97"]},
                 {"target": "expense_type", "rules": ["R03", "R04"], "priority": 15, "values": ["travel", "travel_fee"]},
             ],
+            attempt_cards=attempt_cards["status_cards"],
         ),
     )
 
@@ -158,14 +178,75 @@ def workbench_submit(
         receipt_no = body["receipt"]["receipt_no"]
         suffix = "&replayed=1" if body.get("replayed") else ""
         return RedirectResponse(url=f"/review?receipt={receipt_no}{suffix}", status_code=303)
+    if status_code == 202 and body.get("attempt"):
+        # 结果不明：跳尝试页，引导核对/认领，而不是让用户再点一次提交
+        return RedirectResponse(
+            url=f"/attempts?attempt={body['attempt']['attempt_no']}&unknown=1", status_code=303
+        )
+    if status_code == 502 and body.get("attempt"):
+        return RedirectResponse(
+            url=f"/attempts?attempt={body['attempt']['attempt_no']}&failed=1", status_code=303
+        )
     context = _workbench_context(doc_no, version, True)
     notice = f"提交被拒绝（HTTP {status_code}）：{body.get('detail', '')}"
     return templates.TemplateResponse(
         request,
         "workbench.html",
         _base(request, page="workbench", **context, error=notice),
-        status_code=status_code,
+        status_code=status_code if status_code < 500 else 502,
     )
+
+
+@app.get("/attempts")
+def attempts_page(request: Request, attempt: str | None = None, unknown: int = 0, failed: int = 0):
+    data = service.attempts_data(attempt)
+    notice = None
+    if unknown:
+        notice = "提交结果不明：单据已锁定待核对。可「重试」让系统自动核对远端回执，或人工「认领回执」，不会新增第二张业务回执。"
+    elif failed:
+        notice = "远端明确拒绝且确定未入账：可直接「重试」，沿用同一尝试与回执号。"
+    return templates.TemplateResponse(
+        request,
+        "attempts.html",
+        _base(request, page="attempts", **data, notice=notice),
+    )
+
+
+@app.post("/attempts/{attempt_no}/retry")
+def attempt_retry_form(request: Request, attempt_no: str):
+    try:
+        status_code, body = service.retry_attempt(attempt_no)
+    except service.AttemptNotFound:
+        return templates.TemplateResponse(
+            request, "missing.html",
+            _base(request, page="attempts", error=f"尝试 {attempt_no} 不存在", back_url="/attempts"),
+            status_code=404,
+        )
+    if status_code in (200, 201) and body.get("receipt"):
+        suffix = "&replayed=1" if body.get("replayed") else ""
+        return RedirectResponse(
+            url=f"/review?receipt={body['receipt']['receipt_no']}{suffix}", status_code=303
+        )
+    return RedirectResponse(url=f"/attempts?attempt={attempt_no}", status_code=303)
+
+
+@app.post("/attempts/{attempt_no}/claim")
+async def attempt_claim_form(request: Request, attempt_no: str):
+    form = await request.form()
+    receipt_no = (form.get("receipt_no") or "").strip() or None
+    try:
+        status_code, body = service.claim_attempt(attempt_no, receipt_no)
+    except service.AttemptNotFound:
+        return templates.TemplateResponse(
+            request, "missing.html",
+            _base(request, page="attempts", error=f"尝试 {attempt_no} 不存在", back_url="/attempts"),
+            status_code=404,
+        )
+    if status_code in (200, 201) and body.get("receipt"):
+        return RedirectResponse(
+            url=f"/review?receipt={body['receipt']['receipt_no']}", status_code=303
+        )
+    return RedirectResponse(url=f"/attempts?attempt={attempt_no}", status_code=303)
 
 
 @app.post("/workbench/reset")
@@ -313,3 +394,58 @@ async def api_submit(payload: dict | None = None):
     except service.DocNotFound as exc:
         return JSONResponse({"detail": str(exc)}, status_code=404)
     return JSONResponse(body, status_code=status_code)
+
+
+@app.get("/api/attempts")
+def api_attempts():
+    return service.attempts_data()
+
+
+@app.get("/api/attempts/{attempt_no}")
+def api_attempt_detail(attempt_no: str):
+    data = service.attempts_data(attempt_no)
+    if data["current"] is None:
+        return JSONResponse({"detail": f"尝试 {attempt_no} 不存在"}, status_code=404)
+    return data["current"]
+
+
+@app.post("/api/attempts/{attempt_no}/retry")
+def api_attempt_retry(attempt_no: str):
+    try:
+        status_code, body = service.retry_attempt(attempt_no)
+    except service.AttemptNotFound:
+        return JSONResponse({"detail": f"尝试 {attempt_no} 不存在"}, status_code=404)
+    return JSONResponse(body, status_code=status_code)
+
+
+@app.post("/api/attempts/{attempt_no}/claim")
+async def api_attempt_claim(attempt_no: str, payload: dict | None = None):
+    payload = payload or {}
+    receipt_no = payload.get("receipt_no")
+    try:
+        status_code, body = service.claim_attempt(
+            attempt_no, str(receipt_no).strip() if receipt_no else None
+        )
+    except service.AttemptNotFound:
+        return JSONResponse({"detail": f"尝试 {attempt_no} 不存在"}, status_code=404)
+    return JSONResponse(body, status_code=status_code)
+
+
+@app.post("/api/dev/fault")
+async def api_dev_fault(payload: dict | None = None):
+    """演示/测试用故障注入。生产环境（FORMFORGE_ENABLE_FAULTS=0）直接 404。"""
+    if not settings.ENABLE_FAULTS:
+        return JSONResponse({"detail": "故障注入已关闭（FORMFORGE_ENABLE_FAULTS=0）"}, status_code=404)
+    mode = (payload or {}).get("mode", "none")
+    try:
+        result = gateway.configure_fault(mode)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+    return result
+
+
+@app.get("/api/dev/fault")
+def api_dev_fault_get():
+    if not settings.ENABLE_FAULTS:
+        return JSONResponse({"detail": "故障注入已关闭"}, status_code=404)
+    return {"next_fault": gateway.current_fault(), "enabled": True}

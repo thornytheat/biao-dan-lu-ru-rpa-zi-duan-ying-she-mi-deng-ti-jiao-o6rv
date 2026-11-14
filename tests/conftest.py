@@ -17,13 +17,18 @@ os.environ.setdefault("FORMFORGE_DATA_DIR", tempfile.mkdtemp(prefix="formforge-t
 
 @pytest.fixture(autouse=True)
 def clean_state():
-    from app import store
+    from app import gateway, store
 
+    gateway.reset_fault()
     store.init_db()
     with store.connect() as conn:
         # 每个用例都从 sample_data 重新 seed，避免上一个用例改过源单据影响下一个
-        for table in ("submissions", "audit_events", "previews", "rule_overrides", "source_docs", "meta"):
+        for table in (
+            "submissions", "audit_events", "previews", "rule_overrides",
+            "source_docs", "meta", "submission_attempts", "remote_receipts", "doc_locks",
+        ):
             conn.execute(f"DELETE FROM {table}")
         conn.commit()
     store.seed_docs()
     yield
+    gateway.reset_fault()

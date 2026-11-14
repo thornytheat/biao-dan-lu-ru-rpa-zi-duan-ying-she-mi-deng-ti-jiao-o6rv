@@ -29,6 +29,16 @@
     <div class="k-value">{{ chains|length }}</div>
     <div class="k-note">按版本链归并</div>
   </div>
+  <div class="kpi {% if open_attempt_count %}err{% endif %}">
+    <div class="k-label">在途 / 待核对尝试</div>
+    <div class="k-value">{{ open_attempt_count }}</div>
+    <div class="k-note">{% if locked_docs %}锁定：{{ locked_docs|join('、') }}{% else %}无锁定单据{% endif %}</div>
+  </div>
+  <div class="kpi ok">
+    <div class="k-label">已确认尝试</div>
+    <div class="k-value">{{ attempt_counts.get('confirmed', 0) }}</div>
+    <div class="k-note">尝试总数 {{ attempt_count }}</div>
+  </div>
   <div class="kpi warn">
     <div class="k-label">本页审计中的 replay 次数</div>
     <div class="k-value">{{ audits|selectattr('action', 'equalto', 'replay')|list|length }}</div>
@@ -40,6 +50,38 @@
     <div class="k-note">优先级/停用覆盖条数</div>
   </div>
 </div>
+
+{% if open_attempts %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>待处理尝试（在途 / 待核对，已锁单）</h2>
+    <div class="panel-actions"><span class="tag err">{{ open_attempt_count }} 个尝试等待核对</span></div>
+  </div>
+  <div class="table-wrap">
+    <table class="dense">
+      <thead><tr><th>尝试号</th><th>单据</th><th>状态</th><th>预占回执号</th><th>送达次数</th><th>最近错误</th><th>操作</th></tr></thead>
+      <tbody>
+      {% for a in open_attempts %}
+        <tr>
+          <td><code>{{ a.attempt_no }}</code></td>
+          <td><code>{{ a.doc_no }}</code> v{{ a.version }}</td>
+          <td><span class="tag {{ a.status_tag }}">{{ a.status_label }}</span></td>
+          <td class="small nowrap"><code>{{ a.receipt_no }}</code></td>
+          <td>{{ a.retries }}</td>
+          <td class="small muted" style="max-width:260px">{{ a.last_error or '—' }}</td>
+          <td class="nowrap">
+            <form method="post" action="/attempts/{{ a.attempt_no }}/retry" style="display:inline">
+              <button type="submit" class="btn small">重试</button>
+            </form>
+            <a class="btn secondary small" href="/attempts?attempt={{ a.attempt_no }}">核对/认领</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 
 <section class="panel">
   <div class="toolbar">
@@ -121,7 +163,7 @@
       <div class="panel-head">
         <h2>审计流水（最近 40 条）</h2>
         <div class="panel-actions">
-          <span class="tag">submit / replay / stale_rejected</span>
+          <span class="tag">submit / replay / attempt_* / receipt_claimed / stale_rejected</span>
         </div>
       </div>
       <div class="table-wrap">
@@ -134,7 +176,9 @@
               <td>
                 {% if a.action == 'submit' %}<span class="tag ok">submit</span>
                 {% elif a.action == 'replay' %}<span class="tag warn">replay</span>
-                {% else %}<span class="tag err">{{ a.action }}</span>{% endif %}
+                {% elif a.action in ('attempt_unknown', 'attempt_failed', 'stale_rejected', 'claim_rejected', 'confirm_rolled_back') %}<span class="tag err">{{ a.action }}</span>
+                {% elif a.action == 'attempt_confirmed' or a.action == 'receipt_claimed' %}<span class="tag ok">{{ a.action }}</span>
+                {% else %}<span class="tag">{{ a.action }}</span>{% endif %}
               </td>
               <td class="nowrap"><code>{{ a.doc_no }}</code></td>
               <td>v{{ a.version }}</td>

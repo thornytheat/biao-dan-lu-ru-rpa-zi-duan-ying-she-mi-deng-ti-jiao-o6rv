@@ -10,7 +10,7 @@
 <div class="page-head">
   <div>
     <h1 class="page-title">找不到这个预览</h1>
-    <p class="page-sub">预览按「单据 + 版本 + 规则快照」缓存；改了规则优先级或换了版本后 run_id 会变化，旧链接就失效了。请回工作台重新跑一次 dry-run。</p>
+    <p class="page-sub">{{ error or '预览按单据、版本与规则快照缓存，规则或版本变化后旧链接失效，请回工作台重新运行 dry-run。' }}</p>
   </div>
 </div>
 <section class="panel">
