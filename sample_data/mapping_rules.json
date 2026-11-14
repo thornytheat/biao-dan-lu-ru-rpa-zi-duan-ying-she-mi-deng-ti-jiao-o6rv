@@ -1,0 +1,23 @@
+{
+  "ruleset": "采购申请 → 费用报销单 标准映射",
+  "rules": [
+    {"id": "R01", "target": "amount", "expr": "{{amount_total}}*1.0", "priority": 10, "transform": ["round2"], "note": "单据金额原值（未税口径）"},
+    {"id": "R02", "target": "amount", "expr": "{{amount_total}}*{{tax_rate_factor}}", "priority": 10, "transform": ["round2"], "note": "含税金额换算（13%），与 R01 同优先级 → 冲突"},
+    {"id": "R03", "target": "expense_type", "expr": "{{expense_type}}", "priority": 15, "transform": [], "note": "单据原始费用类型"},
+    {"id": "R04", "target": "expense_type", "expr": "upper({{expense_class}})", "priority": 15, "transform": ["lower"], "note": "费用科目映射，与 R03 同优先级 → 冲突"},
+    {"id": "R05", "target": "applicant", "expr": "trim({{applicant}})", "priority": 20, "transform": [], "note": "申请人去首尾空白"},
+    {"id": "R06", "target": "applicant", "expr": "upper({{applicant}})", "priority": 10, "transform": [], "note": "低优先级备用通道，被 R05 覆盖"},
+    {"id": "R07", "target": "dept_name", "expr": "trim({{dept_name}})", "priority": 20, "transform": [], "note": "申请部门去首尾空白"},
+    {"id": "R08", "target": "remark", "expr": "{{remark_text}}", "priority": 20, "transform": [], "note": "外挂备注字段；源单据未提供 remark_text → 未命中"},
+    {"id": "R09", "target": "occur_date", "expr": "{{occur_date}}", "priority": 20, "transform": [], "note": "发生日期直传，由目标契约校验 ISO 与日期真实性"},
+    {"id": "R10", "target": "cost_center", "expr": "substr({{cost_center}}, 0, 7)", "priority": 20, "transform": [], "note": "成本中心取前 7 位（去掉末级明细段）"},
+    {"id": "R11", "target": "cost_center", "expr": "trim({{cost_center}})", "priority": 10, "transform": [], "note": "低优先级全量值，被 R10 覆盖"},
+    {"id": "R12", "target": "supplier_name", "expr": "trim({{supplier_name}})", "priority": 20, "transform": [], "note": "供应商名称直传"},
+    {"id": "R13", "target": "supplier_name", "expr": "trim({{supplier_name}})", "priority": 30, "transform": [], "note": "复核通道，与 R12 同值不同优先级 → 不冲突"},
+    {"id": "R14", "target": "currency", "expr": "CNY", "priority": 20, "transform": [], "note": "常量：报销系统只收人民币"},
+    {"id": "R15", "target": "currency", "expr": "{{currency}}", "priority": 10, "transform": [], "note": "低优先级，被常量规则 R14 覆盖"},
+    {"id": "R16", "target": "remark", "expr": "{{remark}}", "priority": 15, "transform": ["trim"], "note": "备注直传"},
+    {"id": "R17", "target": "expense_type", "expr": "trim({{expense_type}})", "priority": 5, "transform": [], "note": "最低优先级备用通道"},
+    {"id": "R18", "target": "urgent", "expr": "{{urgent}}", "priority": 20, "transform": [], "note": "加急标记，布尔化由目标契约完成"}
+  ]
+}

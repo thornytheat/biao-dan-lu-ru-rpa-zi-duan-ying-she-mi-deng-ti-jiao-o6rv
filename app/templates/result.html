@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}dry-run 结果 · {{ run.run_id }}{% endblock %}
+{% block crumb %}dry-run 结果{% endblock %}
+{% block meta %}<span class="dot {% if run.submittable %}ok{% else %}err{% endif %}"></span>{% if run.submittable %}可提交{% else %}不可提交{% endif %} · 单据 {{ run.doc_no }} v{{ run.version }}{% endblock %}
+{% block actions %}
+<a class="btn secondary small" href="/workbench?doc={{ run.doc_no }}&run=1">回工作台</a>
+{% if run.submittable %}
+<form method="post" action="/workbench/submit" data-json-submit data-doc-no="{{ run.doc_no }}" style="display:inline-flex">
+  <input type="hidden" name="doc_no" value="{{ run.doc_no }}">
+  <input type="hidden" name="version" value="{{ run.version }}">
+  <button type="submit" class="btn small">按此结果提交</button>
+</form>
+{% else %}
+<span class="btn small" aria-disabled="true" style="opacity:.55;pointer-events:none">不可提交（{{ run.stats.conflict_count }} 冲突 / {{ run.stats.error_count }} 校验错误）</span>
+{% endif %}
+{% endblock %}
+{% block status_left %}规则集「{{ run.ruleset }}」 · 规则快照 <code>{{ run.rules_digest[:12] }}…</code> · 生成于 {{ run.created_at }}{% endblock %}
+{% block status_right %}run_id <code>{{ run.run_id }}</code>{% endblock %}
+
+{% block content %}
+<p id="form-error" class="alert alert-error" hidden></p>
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">dry-run 结果 · {{ run.run_id }}</h1>
+    <p class="page-sub">
+      单据 <code>{{ run.doc_no }}</code> v{{ run.version }} ·
+      规则集「{{ run.ruleset }}」 · 规则快照 <code>{{ run.rules_digest[:12] }}…</code> ·
+      生成于 {{ run.created_at }}
+      {% if run.preview_created_at %}· 预览缓存于 {{ run.preview_created_at }}{% endif %}
+      ·
+      {% if run.submittable %}
+        <span class="tag ok">可提交</span> 12 个目标字段全部可定值并通过契约校验，可提交落库。
+      {% else %}
+        <span class="tag err">不可提交</span> 存在 {{ run.stats.conflict_count }} 条未决冲突、
+        {{ run.stats.error_count }} 条校验错误；此时提交会返回 HTTP 422。
+      {% endif %}
+    </p>
+  </div>
+</div>
+
+<div class="kpi-strip">
+  <div class="kpi {% if run.stats.conflict_count %}err{% endif %}">
+    <div class="k-label">同优先级冲突</div>
+    <div class="k-value">{{ run.stats.conflict_count }}</div>
+    <div class="k-note">同 target 同 priority 多值不同</div>
+  </div>
+  <div class="kpi {% if run.stats.error_count %}warn{% endif %}">
+    <div class="k-label">校验错误</div>
+    <div class="k-value">{{ run.stats.error_count }}</div>
+    <div class="k-note">阻断提交（HTTP 422）</div>
+  </div>
+  <div class="kpi ok">
+    <div class="k-label">已映射目标字段</div>
+    <div class="k-value">{{ run.stats.mapped_count }}/{{ run.stats.target_count }}</div>
+    <div class="k-note">规则命中且可定值</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">幂等键</div>
+    <div class="k-value" style="font-size:13px;font-family:var(--font-mono);letter-spacing:0">{{ run.idempotency_key_short }}…</div>
+    <div class="k-note">sha256(doc_no + version + payload)</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">未命中规则</div>
+    <div class="k-value">{{ run.stats.rules_miss }}</div>
+    <div class="k-note">可空字段不阻断提交</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <div class="segmented">
+      <button type="button" data-tab-target="tab-map" class="active">字段映射</button>
+      <button type="button" data-tab-target="tab-conflict">冲突与校验</button>
+      <button type="button" data-tab-target="tab-payload">载荷</button>
+    </div>
+    <div class="panel-actions">
+      <span class="tag">{{ run.targets|length }} 个目标字段</span>
+      <a class="btn secondary small" href="/workbench?doc={{ run.doc_no }}&run=1">回工作台改规则重跑</a>
+    </div>
+  </div>
+
+  <div id="tab-map" class="tab-panel">
+    <div class="table-wrap roomy">
+      <table class="dense">
+        <thead><tr><th>目标字段</th><th>类型/必填</th><th>状态</th><th>提交值</th><th>来源规则（表达式 → 值）</th></tr></thead>
+        <tbody>
+        {% for t in run.targets %}
+          <tr>
+            <td><code>{{ t.name }}</code><div class="small muted">{{ t.label }}</div></td>
+            <td class="small">{{ t.type }}{% if t.required %} · <span class="tag err">必填</span>{% else %} · <span class="tag">可空</span>{% endif %}</td>
+            <td>
+              {% if t.status == 'ok' %}<span class="tag ok">已映射</span>
+              {% elif t.status == 'conflict' %}<span class="tag err">冲突未决</span>
+              {% elif t.status == 'miss' %}<span class="tag warn">规则未命中</span>
+              {% elif t.status == 'unmapped' %}<span class="tag warn">无规则</span>
+              {% else %}<span class="tag">—</span>{% endif %}
+            </td>
+            <td><strong>{{ t.value_display }}</strong></td>
+            <td class="small">
+              {% if t.chosen %}
+                <div><code>{{ t.chosen.rule_id }}</code> <span class="muted">p{{ t.chosen.priority }}</span> · {{ t.chosen.expr }}</div>
+                {% if t.chosen.overridden %}
+                <div class="muted">被更高优先级覆盖：
+                  {% for o in t.chosen.overridden %}<code>{{ o.rule_id }}</code>(p{{ o.priority }}, {{ o.value_display }}){% if not loop.last %}、{% endif %}{% endfor %}
+                </div>
+                {% endif %}
+              {% else %}
+                {% for r in t.rules %}<div><code>{{ r.rule_id }}</code> <span class="muted">p{{ r.priority }}</span> · {{ r.expr }} → {{ r.reason or r.value_display }}</div>{% endfor %}
+                {% if not t.rules %}<span class="muted">没有任何规则指向该字段</span>{% endif %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="tab-conflict" class="tab-panel" hidden>
+    {% if run.conflicts %}
+    <div class="panel-body tight">
+      <h3 style="margin-top:0">冲突依据（{{ run.conflicts|length }} 条）</h3>
+      {% for c in run.conflicts %}
+      <h3>{{ c.label }} <code>{{ c.target }}</code> · 优先级 {{ c.priority }}</h3>
+      <p class="small">{{ c.summary }}</p>
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>规则</th><th>表达式</th><th>优先级</th><th>值</th></tr></thead>
+          <tbody>
+          {% for cand in c.candidates %}
+            <tr><td><code>{{ cand.rule_id }}</code></td><td><code>{{ cand.expr }}</code></td><td>{{ cand.priority }}</td><td><strong>{{ cand.value_display }}</strong></td></tr>
+          {% endfor %}
+          {% for low in c.lower_priority %}
+            <tr class="muted"><td><code>{{ low.rule_id }}</code></td><td>—</td><td>{{ low.priority }}</td><td>{{ low.value_display }}（已被覆盖）</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="small"><strong>修复建议</strong>：{{ c.fix.why }}</p>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if run.errors %}
+    <div class="panel-body tight">
+      <h3 style="margin-top:0">校验错误依据（{{ run.errors|length }} 条）</h3>
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>目标字段</th><th>错误码</th><th>原因</th><th>下一步</th></tr></thead>
+          <tbody>
+          {% for e in run.errors %}
+            <tr>
+              <td><code>{{ e.target }}</code><div class="small muted">{{ e.label }}</div></td>
+              <td><span class="tag err">{{ e.code }}</span></td>
+              <td>{{ e.message }}
+                {% if e.options %}<div class="small muted">可选项：{{ e.options|join('、') }}</div>{% endif %}
+                {% if e.candidates %}<div class="small muted">候选：
+                  {% for cand in e.candidates %}{{ cand.rule_id }}={{ cand.value_display }}{% if not loop.last %}、{% endif %}{% endfor %}
+                </div>{% endif %}
+              </td>
+              <td class="small muted">{{ e.hint }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">按错误码汇总：
+        {% for g in run.error_groups %}<span class="tag err">{{ g.code }} × {{ g.count }}</span> {% endfor %}
+      </p>
+    </div>
+    {% endif %}
+
+    <div class="panel-body tight">
+      <h3 style="margin-top:0">未命中的规则（{{ run.stats.rules_miss }} 条）</h3>
+      {% if run.stats.missed_rules %}
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>规则</th><th>目标字段</th><th>原因</th></tr></thead>
+          <tbody>
+          {% for m in run.stats.missed_rules %}
+            <tr><td><code>{{ m.rule_id }}</code></td><td><code>{{ m.target }}</code></td><td>{{ m.reason }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">未命中不影响可空字段（例如备注），但必填字段的规则全部未命中会报 <code>missing_required</code> 并阻断提交。</p>
+      {% else %}
+      <p class="muted">本次所有规则都命中。</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div id="tab-payload" class="tab-panel" hidden>
+    <div class="split" style="padding:0">
+      <section class="panel" style="border:0;border-radius:0">
+        <div class="panel-head"><h2>规范化 payload（提交给目标表单的内容）</h2></div>
+        {% if run.payload %}
+        <div class="table-wrap auto">
+          <table class="dense">
+            <thead><tr><th>目标字段</th><th>提交值</th></tr></thead>
+            <tbody>
+            {% for k, v in run.payload.items() %}
+              <tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">payload 为空（存在未定值字段）。</div>
+        {% endif %}
+      </section>
+      <section class="panel" style="border:0;border-radius:0">
+        <div class="panel-head"><h2>payload JSON（幂等键的规范化输入）</h2></div>
+        <div class="panel-body tight">
+          <pre style="margin:0">{{ run.payload | pretty_json }}</pre>
+        </div>
+      </section>
+    </div>
+    <div class="panel-body tight">
+      <details class="help">
+        <summary>幂等键与 payload sha256 口径</summary>
+        <p class="small" style="margin-bottom:4px">幂等键（sha256(doc_no + version + 规范化 payload)）：</p>
+        <p><code class="mono">{{ run.idempotency_key }}</code></p>
+        <p class="small muted" style="margin-bottom:0">payload sha256：<code>{{ run.payload_sha }}</code> · 幂等键只在 payload 完全一致时重复，
+          重复提交返回既有回执且 <code>replayed=true</code>。</p>
+      </details>
+    </div>
+  </div>
+</div>
+{% endblock %}

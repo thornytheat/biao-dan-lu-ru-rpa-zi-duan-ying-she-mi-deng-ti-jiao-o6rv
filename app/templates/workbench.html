@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+{% block title %}映射工作台 · {{ app_name }}{% endblock %}
+{% block crumb %}映射工作台{% endblock %}
+{% block meta %}<span class="dot {% if run and not run.submittable %}warn{% else %}ok{% endif %}"></span>
+{% if run %}单据 {{ run.doc_no }} v{{ run.doc_version }} · {% if run.submittable %}可提交{% else %}{{ run.stats.conflict_count }} 冲突 / {{ run.stats.error_count }} 校验错误{% endif %}{% else %}无可用单据{% endif %}{% endblock %}
+{% block actions %}
+<button type="submit" form="rules-form" class="btn secondary small">保存并重跑</button>
+<button type="submit" form="run-form" name="run" value="1" class="btn small">运行 dry-run</button>
+{% endblock %}
+{% block status_left %}规则覆盖 {{ override_count }} 条 · 规则集 {{ run.ruleset if run else '—' }} · dry-run 只写预览快照，不写业务记录{% endblock %}
+{% block status_right %}{% if run %}预览 run_id <code>{{ run.run_id }}</code>{% else %}{{ app_name }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">映射工作台</h1>
+    <p class="page-sub">选一张源单据 → 看规则怎么命中 → 运行 dry-run 看冲突与校验错误 → 改规则优先级后重跑 → 通过后提交拿回执。
+      规则覆盖（优先级/停用）会写进 SQLite，刷新页面和重启容器都保留；「恢复样例默认」可清空覆盖。</p>
+  </div>
+</div>
+
+<div class="split">
+  <section class="panel pane-sticky" id="m1">
+    <div class="panel-head">
+      <h2>任务输入</h2>
+      <div class="panel-actions"><span class="tag">源单据</span></div>
+    </div>
+    <div class="panel-body">
+      <form method="get" action="/workbench" id="run-form">
+        <div class="field">
+          <label for="doc">源单据</label>
+          <select id="doc" name="doc">
+            {% for item in docs %}
+            <option value="{{ item.doc_no }}" {% if item.doc_no == selected %}selected{% endif %}>
+              {{ item.doc_no }} · v{{ item.version }} · {{ item.doc.applicant }} · {{ item.doc.amount_total }} 元
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="version">提交版本 version</label>
+          <input id="version" name="version" type="number" min="1" step="1" value="{{ version if version else '' }}" placeholder="默认取单据版本">
+        </div>
+        <p class="small muted" style="margin-bottom:6px">
+          用当前单据直接重跑：<a href="/workbench?doc={{ selected }}&run=1">/workbench?doc={{ selected }}&amp;run=1</a>
+        </p>
+        <p class="small" style="margin-bottom:0">
+          {% if override_count %}<span class="tag warn">{{ override_count }} 条规则被覆盖</span>{% else %}<span class="tag ok">规则为样例默认优先级</span>{% endif %}
+          {% if run %}· 预览 run_id <code>{{ run.run_id }}</code>{% endif %}
+        </p>
+      </form>
+
+      {% if run %}
+      <details class="help" style="margin-top:10px">
+        <summary>源单据字段（{{ run.doc_no }} v{{ run.doc_version }}，{{ run.doc_fields|length }} 个）</summary>
+        <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>源字段</th><th>值</th></tr></thead>
+          <tbody>
+          {% for f in run.doc_fields %}
+            <tr><td><code>{{ f.name }}</code></td><td>{{ f.value_display }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </details>
+      {% endif %}
+
+      <details class="help" style="margin-top:10px">
+        <summary>规则优先级怎么影响结果</summary>
+        <p class="small muted" style="margin-bottom:0">
+          同一 target 取最高 priority；同 priority 多值不同即冲突（冲突字段无法定值 → 校验报
+          <code>conflict_unresolved</code>，提交会被 422 拒绝）。调高某条规则的优先级即可让它在冲突中胜出。
+          保存会立即按新优先级重跑 dry-run（预览不写业务记录）。
+        </p>
+      </details>
+    </div>
+    <div class="panel-actions">
+      <button type="submit" form="run-form" name="run" value="1">运行 dry-run</button>
+      <button type="submit" form="rules-form" class="secondary">保存并重跑</button>
+      <button type="submit" form="rules-form" formaction="/workbench/reset" formmethod="post" class="secondary">恢复默认</button>
+    </div>
+  </section>
+
+  <div>
+    <div class="kpi-strip">
+      <div class="kpi {% if run and run.stats.conflict_count %}err{% endif %}">
+        <div class="k-label">同优先级冲突</div>
+        <div class="k-value">{{ run.stats.conflict_count if run else '—' }}</div>
+        <div class="k-note">同 target 同 priority 多值不同</div>
+      </div>
+      <div class="kpi {% if run and run.stats.error_count %}warn{% endif %}">
+        <div class="k-label">校验错误</div>
+        <div class="k-value">{{ run.stats.error_count if run else '—' }}</div>
+        <div class="k-note">冲突未决 / 越界 / 枚举错</div>
+      </div>
+      <div class="kpi ok">
+        <div class="k-label">已映射目标字段</div>
+        <div class="k-value">{{ run.stats.mapped_count if run else '—' }}/{{ run.stats.target_count if run else fields|length }}</div>
+        <div class="k-note">规则命中且可定值</div>
+      </div>
+      <div class="kpi">
+        <div class="k-label">未命中规则</div>
+        <div class="k-value">{{ run.stats.rules_miss if run else '—' }}</div>
+        <div class="k-note">可空字段不阻断提交</div>
+      </div>
+      <div class="kpi">
+        <div class="k-label">规则覆盖</div>
+        <div class="k-value">{{ override_count }}</div>
+        <div class="k-note">SQLite 持久化</div>
+      </div>
+    </div>
+
+    <section class="panel" id="m2">
+      <div class="panel-head">
+        <h2>映射规则（{{ rules|length }} 条，可改优先级 / 停用）</h2>
+        <div class="panel-actions">
+          <span class="tag">改完点保存并重跑</span>
+          <a class="btn secondary small" href="/api/rules">看 JSON</a>
+        </div>
+      </div>
+      <form method="post" action="/workbench/rules" id="rules-form">
+        <input type="hidden" name="doc" value="{{ selected }}">
+        <input type="hidden" name="version" value="{{ version if version else '' }}">
+        <div class="table-wrap roomy">
+          <table class="dense">
+            <thead>
+              <tr><th style="width:200px">规则</th><th style="width:112px">目标字段</th><th>表达式 / 变换</th><th style="width:100px">优先级</th><th style="width:54px">启用</th><th style="width:158px">本次求值</th></tr>
+            </thead>
+            <tbody>
+            {% for rule in rules %}
+              {% set hit = rule.hit %}
+              <tr>
+                <td><code>{{ rule.id }}</code><div class="small muted">{{ rule.note }}</div></td>
+                <td><code>{{ rule.target }}</code></td>
+                <td><code>{{ rule.expr }}</code>{% if rule.transform %}<div class="small muted">变换：{{ rule.transform|join(', ') }}</div>{% endif %}</td>
+                <td>
+                  <input type="number" name="priority_{{ rule.id }}" value="{{ rule.priority }}" min="0" max="999" step="1">
+                  <div class="small muted">默认 {{ rule.base_priority }}{% if rule.overridden %} · <span class="tag warn">已覆盖</span>{% endif %}</div>
+                </td>
+                <td><input type="checkbox" name="enabled_{{ rule.id }}" {% if rule.enabled %}checked{% endif %}></td>
+                <td class="small">
+                  {% if hit %}
+                    {% if hit.status == 'ok' %}<span class="tag ok">{{ hit.value_display }}</span>
+                    {% elif hit.status == 'miss' %}<span class="tag warn">未命中</span><div class="muted">{{ hit.reason }}</div>
+                    {% else %}<span class="tag err">表达式错误</span><div class="muted">{{ hit.reason }}</div>{% endif %}
+                  {% else %}<span class="muted">—</span>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </form>
+      <div class="panel-actions">
+        <button type="submit" form="rules-form">保存并重跑</button>
+        <button type="submit" form="rules-form" formaction="/workbench/reset" formmethod="post" class="secondary">恢复样例默认</button>
+        <span class="small muted" style="align-self:center">保存会立即按新优先级重跑 dry-run（预览不写业务记录）。</span>
+      </div>
+    </section>
+
+    {% if run %}
+    <section class="panel" id="m3">
+      <div class="panel-head">
+        <h2>冲突检测（{{ run.conflicts|length }} 条同优先级冲突）</h2>
+        <div class="panel-actions">
+          {% if run.conflicts %}<span class="tag err">阻断提交</span>{% else %}<span class="tag ok">无冲突</span>{% endif %}
+        </div>
+      </div>
+      {% if run.conflicts %}
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th>目标字段</th><th>优先级</th><th>候选规则与值</th><th>建议</th></tr></thead>
+          <tbody>
+          {% for c in run.conflicts %}
+            <tr>
+              <td><code>{{ c.target }}</code><div class="small muted">{{ c.label }}</div></td>
+              <td>{{ c.priority }}</td>
+              <td class="small">
+                {% for cand in c.candidates %}<div><code>{{ cand.rule_id }}</code> = <strong>{{ cand.value_display }}</strong> <span class="muted">({{ cand.expr }})</span></div>{% endfor %}
+              </td>
+              <td class="small">
+                {{ c.fix.why }}
+                <div style="margin-top:6px">
+                  <button type="button" class="secondary small" id="apply-{{ c.target }}"
+                          data-apply-rule="{{ c.fix.rule_id }}" data-apply-priority="{{ c.fix.to_priority }}">采纳建议</button>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty">
+        <strong>本次没有同优先级冲突</strong>
+        冲突只在同一 target 上出现多条同 priority 且值不同时产生；调高某条规则的优先级即可让它胜出。
+      </div>
+      {% endif %}
+    </section>
+
+    <section class="panel" id="m4">
+      <div class="panel-head">
+        <h2>字段校验（{{ run.errors|length }} 条错误）</h2>
+        <div class="panel-actions">
+          {% if run.errors %}
+            {% for g in run.error_groups %}<span class="tag err">{{ g.code }} × {{ g.count }}</span>{% endfor %}
+          {% else %}<span class="tag ok">校验通过</span>{% endif %}
+        </div>
+      </div>
+      {% if run.errors %}
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th>目标字段</th><th>错误码</th><th>原因</th><th>下一步</th></tr></thead>
+          <tbody>
+          {% for e in run.errors %}
+            <tr>
+              <td><code>{{ e.target }}</code><div class="small muted">{{ e.label }}</div></td>
+              <td><span class="tag err">{{ e.code }}</span></td>
+              <td>{{ e.message }}
+                {% if e.options %}<div class="small muted">可选项：{{ e.options|join('、') }}</div>{% endif %}
+              </td>
+              <td class="small muted">{{ e.hint }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty">
+        <strong>本次没有校验错误</strong>
+        必填、枚举、上限等契约校验全部通过；错误会带错误码、原因与下一步建议。
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if run %}
+    <section class="panel" id="m5">
+      <div class="panel-head">
+        <h2>dry-run 预览（逐字段映射结果）</h2>
+        <div class="panel-actions">
+          {% if run.submittable %}<span class="tag ok">可提交</span>{% else %}<span class="tag err">不可提交</span>{% endif %}
+          {% if show_run %}
+          <a class="btn secondary small" href="/result/{{ run.run_id }}">打开结果页</a>
+          {% else %}
+          <span class="tag">运行 dry-run 后可打开结果页</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th>目标字段</th><th>状态</th><th>提交值</th><th>来源规则</th></tr></thead>
+          <tbody>
+          {% for t in run.targets %}
+            <tr>
+              <td><code>{{ t.name }}</code><div class="small muted">{{ t.label }}{% if t.required %} · 必填{% endif %}</div></td>
+              <td>
+                {% if t.status == 'ok' %}<span class="tag ok">已映射</span>
+                {% elif t.status == 'conflict' %}<span class="tag err">冲突未决</span>
+                {% elif t.status == 'miss' %}<span class="tag warn">规则未命中</span>
+                {% elif t.status == 'unmapped' %}<span class="tag warn">无规则</span>
+                {% else %}<span class="tag">—</span>{% endif %}
+              </td>
+              <td>{{ t.value_display }}</td>
+              <td class="small">
+                {% if t.chosen %}
+                  <code>{{ t.chosen.rule_id }}</code> <span class="muted">p{{ t.chosen.priority }}</span>
+                  {% if t.chosen.overridden %}<div class="muted">被覆盖：{% for o in t.chosen.overridden %}{{ o.rule_id }}({{ o.value_display }}) {% endfor %}</div>{% endif %}
+                {% else %}
+                  {% for r in t.rules %}<div><code>{{ r.rule_id }}</code> {{ r.reason or r.value_display }}</div>{% endfor %}
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-body tight">
+        <p class="small muted" style="margin:0">
+          幂等键 <code title="{{ run.idempotency_key }}">{{ run.idempotency_key_short }}…</code>
+          · payload sha256 <code>{{ run.payload_sha[:12] }}…</code>
+          · 规则快照 <code>{{ run.rules_digest[:12] }}…</code>
+        </p>
+      </div>
+    </section>
+
+    <section class="panel" id="m6">
+      <div class="panel-head">
+        <h2>提交并取回执</h2>
+        <div class="panel-actions">{% if run.submittable %}<span class="tag ok">可提交</span>{% else %}<span class="tag err">不可提交</span>{% endif %}</div>
+      </div>
+      <div class="panel-body">
+        {% if run.submittable %}
+        <form method="post" action="/workbench/submit" data-json-submit data-doc-no="{{ run.doc_no }}">
+          <input type="hidden" name="doc_no" value="{{ run.doc_no }}">
+          <div class="field" style="max-width:240px">
+            <label for="submit-version">提交版本 version（同号改内容必须升版，否则 409）</label>
+            <input id="submit-version" name="version" type="number" min="1" step="1" value="{{ run.version }}">
+          </div>
+          <button type="submit">提交并取回执</button>
+          <p id="form-error" class="alert alert-error" hidden></p>
+        </form>
+        {% else %}
+        <p class="small" style="margin:0">
+          当前有 {{ run.stats.conflict_count }} 条冲突、{{ run.stats.error_count }} 条校验错误，提交按钮不可用（后端也会返回 422）。
+          可先按冲突建议调整优先级，再「保存并重跑」。
+        </p>
+        {% endif %}
+        <p class="small muted" id="run-error" hidden></p>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

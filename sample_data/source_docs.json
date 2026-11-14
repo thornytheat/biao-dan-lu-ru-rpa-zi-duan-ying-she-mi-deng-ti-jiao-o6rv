@@ -1,0 +1,48 @@
+{
+  "docs": [
+    {
+      "doc_no": "CG-2026-0001",
+      "version": 1,
+      "applicant": " 张伟 ",
+      "dept_name": " 财务共享中心-费用组 ",
+      "expense_type": "travel",
+      "expense_class": "TRAVEL_FEE",
+      "amount_total": 1280.5,
+      "tax_rate_factor": 1.13,
+      "occur_date": "2026-03-05",
+      "cost_center": "CC-3301-01",
+      "supplier_name": "北京云海商旅服务有限公司",
+      "urgent": true,
+      "currency": "CNY",
+      "remark": "3 月华东出差差旅报销"
+    },
+    {
+      "doc_no": "CG-2026-0002",
+      "version": 1,
+      "applicant": "李娜",
+      "dept_name": "集团采购部",
+      "expense_type": "office",
+      "amount_total": 128000,
+      "occur_date": "2026-03-11",
+      "cost_center": "CC-2205-02",
+      "supplier_name": "上海恒信办公设备有限公司",
+      "urgent": false,
+      "currency": "CNY",
+      "remark": "整层工位改造办公家具采购，金额超单笔上限"
+    },
+    {
+      "doc_no": "CG-2026-0003",
+      "version": 1,
+      "applicant": "王强",
+      "dept_name": "集团行政部",
+      "expense_type": "meal",
+      "amount_total": 860,
+      "occur_date": "2026-03-12",
+      "cost_center": "CC-1108-03",
+      "supplier_name": "广州味道餐饮管理有限公司",
+      "urgent": "是",
+      "currency": "CNY",
+      "remark": "接待用餐，费用类型填写不规范"
+    }
+  ]
+}

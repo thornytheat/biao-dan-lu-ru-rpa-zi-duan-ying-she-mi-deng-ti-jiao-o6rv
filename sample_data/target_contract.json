@@ -1,0 +1,23 @@
+{
+  "form": "expense_claim_form",
+  "form_title": "费用报销单 · 目标 Web 表单契约",
+  "contract_version": "2026.03",
+  "fields": [
+    {"name": "doc_no", "label": "单据编号", "type": "string", "required": true, "max_length": 32, "note": "目标表单只读，由单据身份注入"},
+    {"name": "version", "label": "单据版本", "type": "integer", "required": true, "min": 1, "note": "由单据身份注入"},
+    {"name": "applicant", "label": "申请人", "type": "string", "required": true, "max_length": 20},
+    {"name": "dept_name", "label": "申请部门", "type": "string", "required": true, "max_length": 30},
+    {"name": "expense_type", "label": "费用类型", "type": "enum", "required": true,
+     "options": [{"value": "traffic", "label": "交通"}, {"value": "office", "label": "办公"},
+                 {"value": "travel", "label": "差旅"}, {"value": "entertain", "label": "业务招待"},
+                 {"value": "training", "label": "培训"}]},
+    {"name": "amount", "label": "金额（元）", "type": "amount", "required": true, "decimals": 2, "max": 50000,
+     "note": "两位小数、必须大于 0、单笔上限 5 万"},
+    {"name": "occur_date", "label": "发生日期", "type": "date", "required": true},
+    {"name": "cost_center", "label": "成本中心", "type": "string", "required": true, "max_length": 12},
+    {"name": "supplier_name", "label": "供应商", "type": "string", "required": true, "max_length": 60},
+    {"name": "urgent", "label": "加急", "type": "boolean", "required": false},
+    {"name": "currency", "label": "币种", "type": "string", "required": false, "max_length": 3},
+    {"name": "remark", "label": "备注", "type": "string", "required": false, "max_length": 120}
+  ]
+}

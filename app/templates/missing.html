@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}找不到预览 · {{ app_name }}{% endblock %}
+{% block crumb %}预览不存在{% endblock %}
+{% block meta %}<span class="dot err"></span>预览已失效{% endblock %}
+{% block actions %}
+<a class="btn secondary small" href="/">回首页</a>
+<a class="btn small" href="{{ back_url or '/workbench' }}">回映射工作台</a>
+{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">找不到这个预览</h1>
+    <p class="page-sub">预览按「单据 + 版本 + 规则快照」缓存；改了规则优先级或换了版本后 run_id 会变化，旧链接就失效了。请回工作台重新跑一次 dry-run。</p>
+  </div>
+</div>
+<section class="panel">
+  <div class="panel-body">
+    <a class="btn" href="{{ back_url or '/workbench' }}">回映射工作台</a>
+    <a class="btn secondary" href="/">回首页</a>
+  </div>
+</section>
+{% endblock %}

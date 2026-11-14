@@ -1,0 +1,21 @@
+name: formforge
+
+services:
+  app:
+    build: .
+    container_name: formforge-app
+    ports:
+      - "${APP_PORT:-18211}:8000"
+    environment:
+      APP_PORT: "18211"
+      FORMFORGE_DATA_DIR: /app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - formforge-data:/app/data
+
+volumes:
+  formforge-data:

@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+{% block title %}提交复核与回执 · {{ app_name }}{% endblock %}
+{% block crumb %}复核与回执{% endblock %}
+{% block meta %}<span class="dot {% if submissions %}ok{% else %}warn{% endif %}"></span>提交 {{ submission_count }} 条 · 单据 {{ chains|length }} 个 · 审计 {{ audits|length }} 条{% endblock %}
+{% block actions %}
+<button type="button" class="btn secondary small" data-export-csv="submissions-table">导出 CSV</button>
+<a class="btn small" href="/workbench?doc=CG-2026-0001&run=1">回工作台</a>
+{% endblock %}
+{% block status_left %}replay = 命中幂等键返回既有回执（不新增记录） · stale_rejected = 同号改内容未升版被 409 拒绝{% endblock %}
+{% block status_right %}{% if receipt %}当前回执 <code>{{ receipt.receipt_no }}</code>{% else %}{{ app_name }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">提交复核与回执</h1>
+    <p class="page-sub">每行是一次真实落库的提交；同一单据的多次升版按版本链排列。replay 表示重复提交命中幂等键，
+      系统返回既有回执并未新增记录；stale_rejected 表示同号改内容却没升版，被 409 拒绝。</p>
+  </div>
+</div>
+
+<div class="kpi-strip">
+  <div class="kpi">
+    <div class="k-label">提交记录（submissions）</div>
+    <div class="k-value">{{ submission_count }}</div>
+    <div class="k-note">已落库回执</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">涉及单据</div>
+    <div class="k-value">{{ chains|length }}</div>
+    <div class="k-note">按版本链归并</div>
+  </div>
+  <div class="kpi warn">
+    <div class="k-label">本页审计中的 replay 次数</div>
+    <div class="k-value">{{ audits|selectattr('action', 'equalto', 'replay')|list|length }}</div>
+    <div class="k-note">幂等命中，未新增记录</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">规则覆盖</div>
+    <div class="k-value">{{ override_count }}</div>
+    <div class="k-note">优先级/停用覆盖条数</div>
+  </div>
+</div>
+
+<section class="panel">
+  <div class="toolbar">
+    <input type="search" id="review-search" placeholder="搜索回执号 / 单据号 / 幂等键" aria-label="搜索提交记录" style="min-width:260px">
+    <select id="review-doc" aria-label="按单据筛选">
+      <option value="">全部单据</option>
+      {% for chain in chains %}<option value="{{ chain.doc_no }}">{{ chain.doc_no }}</option>{% endfor %}
+    </select>
+    <select id="review-replay" aria-label="按 replay 筛选">
+      <option value="">全部提交</option>
+      <option value="1">有 replay</option>
+      <option value="0">无 replay</option>
+    </select>
+    <span class="spacer"></span>
+    <span class="small muted" id="review-stat">共 {{ submissions|length }} 条提交</span>
+    <button type="button" class="btn small secondary" data-export-csv="submissions-table">导出 CSV</button>
+  </div>
+  <div class="table-wrap roomy">
+    <table class="dense" id="submissions-table">
+      <thead><tr><th>回执号</th><th>单据号</th><th>版本</th><th>幂等键</th><th>payload sha256</th><th>提交时间</th><th>replay</th><th></th></tr></thead>
+      <tbody>
+      {% for s in submissions %}
+        <tr data-doc="{{ s.doc_no }}" data-replay="{{ '1' if s.replayed_times else '0' }}">
+          <td><code>{{ s.receipt_no }}</code></td>
+          <td>{{ s.doc_no }}</td>
+          <td>v{{ s.version }}</td>
+          <td><code title="{{ s.idem_key }}">{{ s.idem_key_short }}…</code></td>
+          <td><code>{{ s.payload_sha_short }}…</code></td>
+          <td class="small muted nowrap">{{ s.created_at }}</td>
+          <td>
+            {% if s.replayed_times %}<span class="tag warn">replayed × {{ s.replayed_times }}</span>{% else %}<span class="tag">0</span>{% endif %}
+          </td>
+          <td><a class="small" href="/review?receipt={{ s.receipt_no }}">回执详情</a></td>
+        </tr>
+      {% else %}
+        <tr data-placeholder="1"><td colspan="8" class="muted">还没有提交记录。去 <a href="/workbench?doc=CG-2026-0001&run=1">工作台</a> 跑 dry-run 并提交一次。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel-actions">
+    <span class="small muted" style="align-self:center">旧版本保留可查：升版只新增行，不覆盖历史回执。</span>
+  </div>
+</section>
+
+<div class="split result">
+  <div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>版本链</h2>
+        <div class="panel-actions"><span class="tag">{{ chains|length }} 个单据</span></div>
+      </div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th>单据号</th><th>版本链</th><th>当前最新</th></tr></thead>
+          <tbody>
+          {% for chain in chains %}
+            <tr>
+              <td><code>{{ chain.doc_no }}</code></td>
+              <td>
+                {% for v in chain.versions %}
+                  <a href="/review?receipt={{ v.receipt_no }}">v{{ v.version }}</a>
+                  <span class="small muted">({{ v.created_at }})</span>
+                  {% if v.replayed_times %}<span class="tag warn">replay×{{ v.replayed_times }}</span>{% endif %}
+                  {% if not loop.last %} → {% endif %}
+                {% endfor %}
+              </td>
+              <td>v{{ chain.latest_version }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="muted">还没有版本链。</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>审计流水（最近 40 条）</h2>
+        <div class="panel-actions">
+          <span class="tag">submit / replay / stale_rejected</span>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th>时间</th><th>动作</th><th>单据</th><th>版本</th><th>回执</th><th>说明</th></tr></thead>
+          <tbody>
+          {% for a in audits %}
+            <tr>
+              <td class="small muted nowrap">{{ a.created_at }}</td>
+              <td>
+                {% if a.action == 'submit' %}<span class="tag ok">submit</span>
+                {% elif a.action == 'replay' %}<span class="tag warn">replay</span>
+                {% else %}<span class="tag err">{{ a.action }}</span>{% endif %}
+              </td>
+              <td class="nowrap"><code>{{ a.doc_no }}</code></td>
+              <td>v{{ a.version }}</td>
+              <td class="small nowrap">{{ a.receipt_no or '—' }}</td>
+              <td class="small">{{ a.detail }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="muted">还没有审计记录。只有提交路径写审计：<code>submit</code> 新建回执、<code>replay</code> 幂等命中、<code>stale_rejected</code> 版本冲突拒绝；dry-run 不写审计。</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>规则覆盖（{{ override_count }} 条）</h2>
+        <div class="panel-actions"><span class="tag">SQLite 持久化</span></div>
+      </div>
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>规则</th><th>优先级</th><th>启用</th></tr></thead>
+          <tbody>
+          {% for o in overrides %}
+            <tr><td><code>{{ o.rule_id }}</code></td><td>{{ o.priority if o.priority is not none else '默认' }}</td>
+                <td>{{ '启用' if o.enabled else '已停用' }}</td></tr>
+          {% else %}
+            <tr><td colspan="3" class="muted">当前所有规则都用样例默认优先级（没有覆盖记录）。</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-actions">
+        <form method="post" action="/workbench/reset">
+          <input type="hidden" name="doc" value="CG-2026-0001">
+          <button type="submit" class="secondary small">清除规则覆盖，恢复样例默认</button>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <div>
+    <section class="panel pane-sticky" id="receipt-detail">
+      <div class="panel-head">
+        <h2>回执详情</h2>
+        <div class="panel-actions">
+          {% if receipt %}<span class="tag">{{ receipt.receipt_no }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="panel-body tight">
+        {% if receipt %}
+        <div class="table-wrap auto">
+        <table class="dense">
+          <tbody>
+            <tr><th style="width:120px">回执号</th><td><code>{{ receipt.receipt_no }}</code></td></tr>
+            <tr><th>单据 / 版本</th><td><code>{{ receipt.doc_no }}</code> v{{ receipt.version }}</td></tr>
+            <tr><th>幂等键</th><td><code class="mono">{{ receipt.idem_key }}</code></td></tr>
+            <tr><th>payload sha256</th><td><code class="mono">{{ receipt.payload_sha }}</code></td></tr>
+            <tr><th>提交时间</th><td>{{ receipt.created_at }}</td></tr>
+            <tr><th>重复提交次数</th><td>
+              {% if receipt.replayed_times %}<span class="tag warn">replayed × {{ receipt.replayed_times }}</span>
+              {% else %}<span class="tag ok">0（没有重复提交命中）</span>{% endif %}
+            </td></tr>
+          </tbody>
+        </table>
+        </div>
+        <h3>表单内容（提交给目标表单的字段）</h3>
+        <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>目标字段</th><th>值</th></tr></thead>
+          <tbody>
+          {% for k, v in receipt.payload.items() %}
+            <tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        <details class="help" style="margin-top:10px">
+          <summary>payload JSON</summary>
+          <pre style="margin:6px 0 0">{{ receipt.payload | pretty_json }}</pre>
+        </details>
+        {% else %}
+        <div class="empty">
+          <strong>还没有可查看的回执</strong>
+          提交成功后这里会显示回执号、幂等键、payload sha256 与表单内容。
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <details class="help" style="margin-top:12px">
+      <summary>API 快速自测（curl）</summary>
+      <pre style="margin:6px 0 0">curl -s -X POST http://127.0.0.1:18211/api/dry-run -H 'Content-Type: application/json' -d '{"doc_no":"CG-2026-0001"}'
+curl -s -X POST http://127.0.0.1:18211/api/submit  -H 'Content-Type: application/json' -d '{"doc_no":"CG-2026-0001","version":1}'
+curl -s http://127.0.0.1:18211/health</pre>
+    </details>
+  </div>
+</div>
+{% endblock %}
